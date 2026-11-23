@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -389,8 +389,27 @@ def create_app(
             next_month = datetime(year + (month_number == 12), 1 if month_number == 12 else month_number + 1, 1)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="month must be YYYY-MM") from exc
+        inflows = func.sum(
+            case((LedgerEntry.amount_minor > 0, LedgerEntry.amount_minor), else_=0)
+        )
+        outflows = func.sum(
+            case((LedgerEntry.amount_minor < 0, -LedgerEntry.amount_minor), else_=0)
+        )
+        fees = func.sum(
+            case(
+                (LedgerTransaction.kind == "fee", func.abs(LedgerEntry.amount_minor)),
+                else_=0,
+            )
+        )
+        net = func.sum(LedgerEntry.amount_minor)
         rows = db.execute(
-            select(LedgerEntry, LedgerTransaction)
+            select(
+                LedgerEntry.currency,
+                inflows.label("inflows"),
+                outflows.label("outflows"),
+                fees.label("fees"),
+                net.label("net"),
+            )
             .join(LedgerTransaction, LedgerTransaction.id == LedgerEntry.transaction_id)
             .where(
                 LedgerEntry.tenant_id == tenant.id,
@@ -398,31 +417,21 @@ def create_app(
                 LedgerTransaction.occurred_at >= start,
                 LedgerTransaction.occurred_at < next_month,
             )
+            .group_by(LedgerEntry.currency)
+            .order_by(LedgerEntry.currency)
         ).all()
-        totals: dict[str, dict[str, int]] = {}
-        for entry, tx in rows:
-            currency_totals = totals.setdefault(
-                entry.currency, {"inflows": 0, "outflows": 0, "fees": 0, "net": 0}
-            )
-            currency_totals["net"] += entry.amount_minor
-            if entry.amount_minor > 0:
-                currency_totals["inflows"] += entry.amount_minor
-            elif entry.amount_minor < 0:
-                currency_totals["outflows"] += abs(entry.amount_minor)
-            if tx.kind == "fee":
-                currency_totals["fees"] += abs(entry.amount_minor)
         return {
             "client_ref": client_ref,
             "month": month,
             "by_currency": [
                 {
-                    "currency": currency,
-                    "inflows": _format_minor(values["inflows"]),
-                    "outflows": _format_minor(values["outflows"]),
-                    "fees": _format_minor(values["fees"]),
-                    "net": _format_minor(values["net"]),
+                    "currency": row.currency,
+                    "inflows": _format_minor(row.inflows or 0),
+                    "outflows": _format_minor(row.outflows or 0),
+                    "fees": _format_minor(row.fees or 0),
+                    "net": _format_minor(row.net or 0),
                 }
-                for currency, values in sorted(totals.items())
+                for row in rows
             ],
         }
 

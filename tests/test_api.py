@@ -159,6 +159,11 @@ def test_as_of_balance_and_monthly_summary_are_currency_aware(client):
             occurred_at=past(datetime(2025, 1, 15, 12)),
         ),
         transaction_row(
+            "feb-deposit",
+            amount="50.00",
+            occurred_at=past(datetime(2025, 2, 1, 9)),
+        ),
+        transaction_row(
             "feb-withdrawal",
             kind="withdrawal",
             amount="20.00",
@@ -194,8 +199,19 @@ def test_as_of_balance_and_monthly_summary_are_currency_aware(client):
     ).json()
     assert summary["by_currency"] == [
         {"currency": "EUR", "inflows": "10.00", "outflows": "0.00", "fees": "0.00", "net": "10.00"},
-        {"currency": "USD", "inflows": "0.00", "outflows": "25.00", "fees": "5.00", "net": "-25.00"},
+        {"currency": "USD", "inflows": "50.00", "outflows": "25.00", "fees": "5.00", "net": "25.00"},
     ]
+
+
+def test_monthly_summary_is_empty_without_entries(client):
+    tenant = create_tenant(client)
+    response = client.get(
+        "/api/v1/clients/client-opaque-1/summary",
+        headers=headers(tenant["api_key"]),
+        params={"month": "2025-02"},
+    )
+    assert response.status_code == 200
+    assert response.json()["by_currency"] == []
 
 
 def test_reversal_is_once_only_and_tenant_scoped(client):

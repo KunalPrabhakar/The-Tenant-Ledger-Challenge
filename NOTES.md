@@ -6,5 +6,5 @@
 - A transfer writes linked debit and credit entries in one database transaction.
 - Corrections append a reversal with a reason; original postings are never edited or deleted.
 - Unique tenant/external-id constraints make import retries idempotent under concurrent requests.
-- SQLite is a single-writer local challenge database; use PostgreSQL for higher write concurrency.
+- SQL groups summaries; SQLite is single-writer, so 100× load needs PostgreSQL and load checks.
 - Skipped: role-specific staff access, FX conversion, exports, rate limiting, fraud flags, and deployment.
